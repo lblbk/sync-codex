@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="沙漏同步图标">
+  <defs>
+    <linearGradient id="hourglass-sync-sand" x1="0" y1="156" x2="0" y2="368" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8CB62"/><stop offset="1" stop-color="#DE9A24"/>
+    </linearGradient>
+    <clipPath id="hourglass-sync-glass"><path d="M184 148C184 206 246 230 246 256C246 282 184 306 184 364L328 364C328 306 266 282 266 256C266 230 328 206 328 148Z"/></clipPath>
+  </defs>
+  <style>
+.hourglass-sync-flip{transform-origin:256px 256px;transform-box:view-box;animation:hourglass-sync-flip 8s infinite}
+.hourglass-sync-top{transform-origin:256px 256px;transform-box:view-box;animation:hourglass-sync-top 8s infinite}
+.hourglass-sync-bot{transform-origin:256px 360px;transform-box:view-box;animation:hourglass-sync-bot 8s infinite}
+.hourglass-sync-flow{animation:hourglass-sync-flow 8s infinite}
+.hourglass-sync-stream{animation:hourglass-sync-dash .55s linear infinite}
+.hourglass-sync-g1{animation:hourglass-sync-grain .95s linear infinite}
+.hourglass-sync-g2{animation:hourglass-sync-grain 1.15s linear infinite;animation-delay:-.5s}
+.hourglass-sync-shadow{transform-origin:256px 420px;transform-box:view-box;animation:hourglass-sync-shadow 8s infinite}
+@keyframes hourglass-sync-flip{
+  0%,73%{transform:translateY(0) rotate(0deg);animation-timing-function:cubic-bezier(.55,.05,.68,.3)}
+  79%{transform:translateY(-16px) rotate(48deg);animation-timing-function:cubic-bezier(.25,.55,.35,1)}
+  86%{transform:translateY(-3px) rotate(177deg);animation-timing-function:cubic-bezier(.3,.25,.35,1.2)}
+  89%,100%{transform:translateY(0) rotate(180deg)}
+}
+@keyframes hourglass-sync-top{
+  0%{transform:scaleY(1);animation-timing-function:cubic-bezier(.55,.06,.45,.94)}
+  68%,100%{transform:scaleY(.07)}
+}
+@keyframes hourglass-sync-bot{
+  0%{transform:scaleY(.12);animation-timing-function:cubic-bezier(.55,.06,.45,.94)}
+  68%,100%{transform:scaleY(1)}
+}
+@keyframes hourglass-sync-flow{0%,66%{opacity:1}72%{opacity:0}99%{opacity:0}100%{opacity:1}}
+@keyframes hourglass-sync-dash{to{stroke-dashoffset:-13}}
+@keyframes hourglass-sync-grain{0%{transform:translateY(0);opacity:0}12%{opacity:1}78%{transform:translateY(48px);opacity:.9}100%{transform:translateY(54px);opacity:0}}
+@keyframes hourglass-sync-shadow{
+  0%,73%{transform:scaleX(1);opacity:.3}
+  79%{transform:scaleX(.8);opacity:.14}
+  89%,100%{transform:scaleX(1);opacity:.3}
+}
+@media (prefers-reduced-motion:reduce){
+  .hourglass-sync-flip,.hourglass-sync-top,.hourglass-sync-bot,.hourglass-sync-flow,.hourglass-sync-stream,.hourglass-sync-g1,.hourglass-sync-g2,.hourglass-sync-shadow{animation:none}
+}
+</style>
+  <g transform="translate(256 256) scale(1.5 -1.43) translate(-256 -256)">
+    <!-- 沙漏本体：漏尽后整体翻转 180° -->
+    <g class="hourglass-sync-flip">
+      <!-- 玻璃后壁 -->
+      <path d="M184 148C184 206 246 230 246 256C246 282 184 306 184 364L328 364C328 306 266 282 266 256C266 230 328 206 328 148Z" fill="rgba(45,212,191,.12)"/>
+
+      <!-- 玻璃腔内：下沙堆 / 沙流 / 上沙（以玻璃轮廓裁切，自动贴壁） -->
+      <g clip-path="url(#hourglass-sync-glass)">
+        <path class="hourglass-sync-top" d="M178 148L334 148L334 162C314 178 286 186 262 188L262 192L250 192L250 188C226 186 198 178 178 162Z" fill="url(#hourglass-sync-sand)" stroke="#B45309" stroke-width="3"/>
+        <path class="hourglass-sync-bot" d="M178 368L334 368L334 348C316 318 288 306 262 304L262 296L250 296L250 304C226 306 198 318 178 348Z" fill="url(#hourglass-sync-sand)" stroke="#B45309" stroke-width="3"/>
+        <g class="hourglass-sync-flow">
+          <line class="hourglass-sync-stream" x1="256" y1="252" x2="256" y2="302" stroke="#F59E0B" stroke-width="6.5" stroke-linecap="round" stroke-dasharray="5 8"/>
+        <circle class="hourglass-sync-g1" cx="252" cy="262" r="2.5" fill="#F59E0B"/>
+        <circle class="hourglass-sync-g2" cx="260" cy="258" r="2" fill="#F59E0B"/>
+        </g>
+      </g>
+
+      <!-- 玻璃前壁与高光（上下两道互为 180° 映像，翻转后光影依然成立） -->
+      <path d="M184 148C184 206 246 230 246 256C246 282 184 306 184 364L328 364C328 306 266 282 266 256C266 230 328 206 328 148Z" fill="none" stroke="#172033" stroke-width="9" stroke-linejoin="round"/>
+      <path d="M184 148C184 206 246 230 246 256C246 282 184 306 184 364L328 364C328 306 266 282 266 256C266 230 328 206 328 148Z" fill="none" stroke="#D7F5F1" stroke-width="4.5" stroke-linejoin="round"/>
+      <path d="M199 168C199 208 234 228 243 246" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" opacity=".85"/>
+      <path d="M313 344C313 304 278 284 269 266" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" opacity=".65"/>
+
+      <!-- 上下骨架（盖与压圈，与玻璃同为 180° 对称） -->
+      <rect x="156" y="108" width="200" height="30" rx="12" fill="#F8FAFC" stroke="#172033" stroke-width="8"/>
+      <rect x="180" y="119" width="152" height="4" rx="2" fill="#94A3B8" opacity=".8"/>
+      <rect x="178" y="138" width="156" height="10" rx="5" fill="#CBD5E1" stroke="#172033" stroke-width="5"/>
+      <rect x="178" y="364" width="156" height="10" rx="5" fill="#CBD5E1" stroke="#172033" stroke-width="5"/>
+      <rect x="156" y="374" width="200" height="30" rx="12" fill="#F8FAFC" stroke="#172033" stroke-width="8"/>
+      <rect x="180" y="389" width="152" height="4" rx="2" fill="#94A3B8" opacity=".8"/>
+    </g>
+  </g>
+</svg>

@@ -2,7 +2,7 @@
 
 一个轻量工具：读取本地 [CC Switch](https://cc-switch.cc) 的模型列表，通过 SFTP 把 JSON 同步到远程 Linux 主机，供远程 Codex 环境使用。
 
-技术栈：**Vite 7 + Svelte 5 + Node 原生 http / ssh2**
+技术栈：**Vite 7 + Svelte 5 + Tauri 2 + Rust（Tauri 命令 / reqwest / ssh2）**
 
 ## 功能
 
@@ -43,32 +43,40 @@ api_key = "proxy-placeholder"
 4. 配置完成后远程 codex 和本地一样，此时使用本程序开启同步
 
 ```bash
-npm install        # 安装依赖
-npm run dev        # 开发模式（Vite dev server，端口 8000）
-npm run build      # 构建产物到 dist/
-npm start          # 生产模式（静态文件 + API，端口 8001）
+npm install                # 安装前端与 Tauri CLI 依赖
+npm run dev                # 只启动 Vite 前端（不包含后端命令，浏览器内不可调接口）
+npm run build              # 构建前端产物到 dist/
+npm run tauri:dev          # Tauri 开发模式：自动启动 Vite + Rust 本地服务
+npm run tauri:build        # 打包桌面应用安装包
 ```
 
-- 开发模式：浏览器打开 `http://127.0.0.1:8000`
-- 生产模式：浏览器打开 `http://127.0.0.1:8001`
+- 桌面应用开发/打包：`npm run tauri:dev` / `npm run tauri:build`
 
-> 生产模式依赖 `dist/` 产物，改动源码后请先 `npm run build` 再 `npm start`。
+## 打包说明
+
+- 打包类型由 `src-tauri/tauri.conf.json` 的 `bundle.targets` 决定。当前为 `["nsis"]`，会生成 Windows 的 `*-setup.exe` 安装包；Windows 下可选值还有 `"msi"`，或使用 `"all"` 打包当前平台支持的全部类型。
+- 架构不写在 `tauri.conf.json`，由 Rust 的目标三元组决定，例如 `x86_64-pc-windows-msvc` 会生成 `_x64-setup.exe`。
+- 命令行可以临时覆盖：`npx tauri build --bundles nsis`、`npx tauri build --bundles msi nsis`；只生成可执行文件可以加 `--no-bundle`。
 
 ## 目录结构
 
 ```
-server/
-  index.js    # 生产 HTTP 服务器：静态文件 + API 路由
-  api.js      # API 处理：模型代理、同步、远程查看
-  ssh.js      # SSH2/SFTP 封装：上传与读取
 src/
   main.js     # 入口
   App.svelte  # 主界面
   app.css     # 全局样式
-vite.config.js  # Vite 配置（dev 模式挂载 /api 中间件）
+src-tauri/
+  Cargo.toml  # Rust 依赖与 Tauri 配置
+  tauri.conf.json
+  src/
+    api.rs    # Tauri 命令：模型代理、同步、对比、心跳
+    ssh.rs    # ssh2/SFTP 封装：上传与读取
+    models.rs # 模型摘要
+    watcher.rs # 自动同步调度
+vite.config.js  # Vite 配置（Tauri dev 模式使用的本地开发服务器）
 ```
 
 ## 说明
 
-- SSH 密码仅保存在本地浏览器 localStorage，用于自动执行同步；如需更高安全性，建议改用密钥认证。
+- SSH 密码仅保存在应用本机 localStorage，用于自动执行同步；如需更高安全性，建议改用密钥认证。
 - 远程文件默认路径 `/home/<user>/.codex/cc-switch-model-catalog.json`，可在界面中修改。

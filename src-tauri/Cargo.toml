@@ -1,0 +1,22 @@
+[package]
+name = "sync-codex"
+version = "0.1.0"
+description = "Codex remote model sync"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "sync_codex_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+ssh2 = "0.9"
+dirs = "6"

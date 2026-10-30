@@ -52,29 +52,39 @@ h2 {
 .topbar {
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+  user-select: none;
 }
 
 .topbar-inner {
-  max-width: 1360px;
-  margin: 0 auto;
-  padding: 14px 24px;
+  width: 100%;
+  min-height: 40px;
+  padding-left: 18px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
 }
 
+.topbar-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
 .topbar h1 {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 650;
   display: flex;
   align-items: center;
   gap: 9px;
+  white-space: nowrap;
 }
 
 .hourglass {
   display: inline-block;
-  font-size: 19px;
+  font-size: 17px;
   line-height: 1;
   transform-origin: 50% 55%;
 }
@@ -84,9 +94,57 @@ h2 {
 }
 
 .topbar p {
-  margin-top: 2px;
-  font-size: 12.5px;
+  font-size: 11.5px;
   color: var(--muted);
+  white-space: nowrap;
+}
+
+.window-controls {
+  align-self: stretch;
+  flex: 0 0 auto;
+  display: flex;
+}
+
+.window-control {
+  width: 46px;
+  height: 100%;
+  min-height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #3f4854;
+  cursor: default;
+}
+
+.window-control svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
+.window-control:hover {
+  background: #e8ebef;
+  color: #111827;
+}
+
+.window-control:active {
+  background: #dce1e7;
+}
+
+.window-control.close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+.window-control.close:active {
+  background: #a92316;
 }
 
 /* ---------- 状态徽章 ---------- */
@@ -140,6 +198,55 @@ h2 {
   overflow: hidden;
 }
 
+/* ---------- 后台服务离线提醒 ---------- */
+
+.server-offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 24px;
+  background: linear-gradient(90deg, #fff1f2, #fee2e2);
+  border-bottom: 1px solid rgba(220, 38, 38, 0.28);
+  color: #991b1b;
+  z-index: 20;
+  animation: banner-in 0.24s ease;
+}
+
+.banner-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: rgba(220, 38, 38, 0.14);
+  font-size: 15px;
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.server-offline-banner strong {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.server-offline-banner p {
+  margin-top: 1px;
+  font-size: 12.5px;
+  color: #b91c1c;
+}
+
+@keyframes banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .workspace {
   min-height: 0;
   max-width: 1500px;
@@ -154,15 +261,13 @@ h2 {
 
 .side-rail {
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 12px;
   padding-right: 2px;
-  scrollbar-width: none;
 }
 
-.side-rail::-webkit-scrollbar,
 .content::-webkit-scrollbar {
   display: none;
 }
@@ -180,22 +285,26 @@ h2 {
 }
 
 .rail {
-  padding: 18px;
+  padding: 14px;
   flex-shrink: 0;
 }
 
 .rail .panel-head {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .rail .panel-head h2 {
   font-size: 15px;
 }
 
+.rail .btn {
+  padding: 7px 12px;
+}
+
 .status-list {
   display: grid;
   gap: 1px;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -207,10 +316,10 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 44px;
+  min-height: 36px;
   padding: 0 12px;
   background: #fff;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .status-label {
@@ -268,14 +377,14 @@ h2 {
 
 .control-row label > span {
   display: block;
-  margin-bottom: 5px;
+  margin-bottom: 3px;
   font-size: 12px;
   color: var(--muted);
 }
 
 .control-row select {
   width: 100%;
-  height: 38px;
+  height: 34px;
   padding: 0 10px;
   font: inherit;
   color: var(--text);
@@ -292,7 +401,7 @@ h2 {
 }
 
 .control-row .btn {
-  height: 38px;
+  height: 34px;
   padding-inline: 14px;
   justify-content: center;
 }
@@ -300,15 +409,16 @@ h2 {
 .status-refresh {
   width: 100%;
   justify-content: center;
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .rail-auto-status {
-  margin-top: 14px;
-  padding-top: 12px;
+  margin-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid var(--border);
   display: grid;
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
 }
 
 .rail-auto-status p {
@@ -318,6 +428,10 @@ h2 {
   gap: 8px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.rail-auto-status p:nth-last-child(-n + 2) {
+  grid-column: 1 / -1;
 }
 
 .rail-auto-status strong {
@@ -340,7 +454,7 @@ h2 {
 }
 
 .hint.compact {
-  margin-top: 10px;
+  margin-top: 8px;
   line-height: 1.45;
 }
 
@@ -563,7 +677,7 @@ h2 {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .sync-block-head h3 {
@@ -573,7 +687,7 @@ h2 {
 
 .sync-divider {
   border-top: 1px dashed var(--border);
-  margin: 18px 0;
+  margin: 12px 0;
 }
 
 /* ---------- 日志统计与类型 ---------- */
@@ -1443,10 +1557,24 @@ h2 {
 
 /* ---------- 响应式 ---------- */
 
+@media (max-height: 780px) {
+  .workspace {
+    padding-block: 14px;
+  }
+
+  .side-rail .rail {
+    padding: 12px;
+  }
+}
+
 @media (max-width: 640px) {
   .topbar-inner,
   .workspace {
     padding: 14px 16px;
+  }
+
+  .topbar-inner {
+    padding-block: 8px;
   }
 
   .grid {
@@ -1459,10 +1587,6 @@ h2 {
 
   .topbar p {
     display: none;
-  }
-
-  .topbar-inner {
-    flex-wrap: wrap;
   }
 
   .conn-bar {
@@ -1483,6 +1607,11 @@ h2 {
 }
 
 @media (max-width: 980px) {
+  .server-offline-banner {
+    align-items: flex-start;
+    padding: 10px 16px;
+  }
+
   html,
   body {
     overflow: auto;

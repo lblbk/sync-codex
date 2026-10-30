@@ -1,5 +1,7 @@
 <script>
   import { onDestroy, onMount } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { backend } from "./api.js";
   import ModelList from "./ModelList.svelte";
   import LogTable from "./LogTable.svelte";
 
@@ -32,6 +34,10 @@
   let sshState = $state("unknown"); // unknown | ok | fail
   let ccState = $state("unknown");
   let testing = $state(false);
+  let serverOnline = $state(true);
+  let healthTimer = null;
+  let unlistenWindowResize = null;
+  let isMaximized = $state(false);
 
   // ---------- 手动同步 ----------
   let syncing = $state(false);
@@ -170,12 +176,94 @@
     loadLogs();
     loadSyncMeta();
     backfillSyncMetaFromLogs();
-    loadAutoStatus(); // 恢复服务端监控状态
+    loadAutoStatus(); // 恢复后端监控状态
     if (!localFile) autoDetectFile(); // 未保存过路径时自动探测默认目录
     testConnections(true); // 打开页面自动检测连接（静默模式，不写提醒日志）
+    startHealthCheck();
+    initWindowState();
   });
 
+  /* ---------- 自定义标题栏 ---------- */
+
+  function isTauriRuntime() {
+    return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  }
+
+  async function syncMaximizedState() {
+    if (!isTauriRuntime()) return;
+    try {
+      isMaximized = await getCurrentWindow().isMaximized();
+    } catch {
+      // 窗口状态读取失败时保持当前图标状态
+    }
+  }
+
+  function initWindowState() {
+    if (!isTauriRuntime()) return;
+    syncMaximizedState();
+    getCurrentWindow()
+      .onResized(syncMaximizedState)
+      .then((unlisten) => {
+        unlistenWindowResize = unlisten;
+      })
+      .catch(() => {
+        // 浏览器预览或权限缺失时无需监听
+      });
+  }
+
+  async function minimizeWindow() {
+    if (!isTauriRuntime()) return;
+    await getCurrentWindow().minimize();
+  }
+
+  async function toggleMaximizeWindow() {
+    if (!isTauriRuntime()) return;
+    await getCurrentWindow().toggleMaximize();
+    await syncMaximizedState();
+  }
+
+  async function closeWindow() {
+    if (!isTauriRuntime()) return;
+    await getCurrentWindow().close();
+  }
+
   /* ---------- 配置持久化 ---------- */
+
+  /* ---------- 后台服务心跳 ---------- */
+
+  async function checkServerHealth() {
+    try {
+      const data = await backend.health();
+      setServerOnline(Boolean(data?.success));
+    } catch {
+      setServerOnline(false);
+    }
+  }
+
+  function setServerOnline(next) {
+    if (next === serverOnline) return;
+    serverOnline = next;
+    addLog(
+      next
+        ? "后台服务已恢复连接"
+        : "后台服务已断开，网页正在等待服务重新启动",
+      next ? "success" : "error",
+      "system",
+    );
+  }
+
+  function startHealthCheck() {
+    stopHealthCheck();
+    checkServerHealth();
+    healthTimer = setInterval(checkServerHealth, 5000);
+  }
+
+  function stopHealthCheck() {
+    if (healthTimer) {
+      clearInterval(healthTimer);
+      healthTimer = null;
+    }
+  }
 
   function loadConfig() {
     try {
@@ -343,39 +431,12 @@
   /* ---------- 连接测试 ---------- */
 
   async function fetchModels() {
-    const res = await fetch("/api/models");
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return res.json();
+    return backend.models();
   }
 
   /** 只取核心字段的模型列表（用于展示和对比，避免大文件） */
   async function fetchModelSummary() {
-    const res = await fetch("/api/models/summary");
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return res.json();
-  }
-
-  /** POST JSON 并统一处理非 2xx 响应，抛带服务端错误信息的异常 */
-  async function postJson(url, body) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    let data = {};
-    try {
-      data = await res.json();
-    } catch {
-      // 非 JSON 响应
-    }
-    if (!res.ok) {
-      const hint =
-        res.status === 404
-          ? "（接口不存在，请重启服务器加载最新代码）"
-          : "";
-      throw new Error(`${data.error || `HTTP ${res.status}`}${hint}`);
-    }
-    return data;
+    return backend.modelSummary();
   }
 
   /** 同时测试本地 CC Switch 与远程 SSH 连接，更新状态栏徽章。
@@ -400,7 +461,7 @@
       if (!silent) addLog("SSH 未测试：请先填写 SSH 密码", "warn", "connection");
     } else {
       try {
-        const data = await postJson("/api/ssh-test", {
+        const data = await backend.sshTest({
           host: remoteHost,
           user: remoteUser,
           password: sshPassword,
@@ -442,22 +503,18 @@
       );
 
       addLog("正在同步到远程服务器…", "info", "sync");
-      const res = await fetch("/api/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          host: remoteHost,
-          user: remoteUser,
-          path: remotePath,
-          password: sshPassword,
-          models,
-        }),
+      const data = await backend.sync({
+        host: remoteHost,
+        user: remoteUser,
+        path: remotePath,
+        password: sshPassword,
+        models,
       });
-      const data = await res.json();
 
       if (data.success) {
         addLog("同步成功，远程文件已更新", "success", "sync");
         recordManualSync(true);
+        if (remoteOpen) await viewAndCompare({ quiet: true });
       } else {
         addLog(`同步失败: ${data.error || "未知错误"}`, "error", "sync");
         recordManualSync(false);
@@ -472,16 +529,14 @@
 
   /* ---------- 自动同步 ---------- */
 
-  /** 探测本地模型目录文件路径并填入（GET 端点，不能用 postJson） */
+  /** 探测本地模型目录文件路径并填入 */
   async function autoDetectFile() {
     if (detecting) return;
     detecting = true;
     detectState = "idle";
     detectMessage = "正在探测默认路径…";
     try {
-      const res = await fetch("/api/auto-sync/detect");
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const data = await res.json();
+      const data = await backend.autoDetect();
       if (data.localFile) {
         if (localFile !== data.localFile) localFile = data.localFile;
         saveConfig();
@@ -504,8 +559,7 @@
 
   async function fetchAutoStatus() {
     try {
-      const res = await fetch("/api/auto-sync/status");
-      const data = await res.json();
+      const data = await backend.autoSyncStatus();
       return data.success ? data.status : null;
     } catch {
       return null;
@@ -519,7 +573,7 @@
       autoStatus = st;
       autoOn = st.watching;
       rememberAutoSync(st);
-      // 服务端仍在监控时恢复轮询（页面刷新后状态区才能持续自动更新）
+      // 后端仍在监控时恢复轮询（窗口刷新后状态区才能持续自动更新）
       if (st.watching) startPolling();
     }
     if (refreshFeedback) {
@@ -542,6 +596,7 @@
           st.lastSyncOk ? "success" : "error",
           "auto",
         );
+        if (st.lastSyncOk && remoteOpen) await viewAndCompare({ quiet: true });
       }
       autoStatus = st;
       lastStatusAt = Date.now();
@@ -565,16 +620,16 @@
 
     autoBusy = true;
     try {
-      const data = await postJson("/api/auto-sync/start", {
+      const data = await backend.autoSyncStart({
         host: remoteHost,
         user: remoteUser,
         path: remotePath,
         password: sshPassword,
-        localFile, // 可为空：服务端自动使用默认目录（~/.codex/ 等）
+        localFile, // 可为空：后端自动使用默认目录（~/.codex/ 等）
         intervalMs: Number(intervalMs),
       });
       if (data.success) {
-        // 回填服务端实际使用的文件路径
+        // 回填后端实际使用的文件路径
         if (data.status?.localFile && data.status.localFile !== localFile) {
           localFile = data.status.localFile;
           saveConfig();
@@ -603,7 +658,7 @@
   async function stopAutoSync() {
     autoBusy = true;
     try {
-      const data = await postJson("/api/auto-sync/stop");
+      const data = await backend.autoSyncStop();
       if (data.success) {
         autoOn = false;
         autoStatus = data.status;
@@ -619,13 +674,17 @@
     stopPolling();
   }
 
-  onDestroy(stopPolling);
+  onDestroy(() => {
+    unlistenWindowResize?.();
+    stopPolling();
+    stopHealthCheck();
+  });
 
   /* ---------- 调试：远程对比 ---------- */
 
   /** 读取远程模型目录（SSH），只保留核心字段 */
   async function loadRemoteFile() {
-    const data = await postJson("/api/remote-models", {
+    const data = await backend.remoteModels({
       host: remoteHost,
       user: remoteUser,
       path: remotePath,
@@ -635,11 +694,12 @@
     remoteContent = JSON.stringify(remoteParsed, null, 2);
   }
 
-  /** 查看远程文件并对比本地：一次拉取本地模型 + 远程文件，产出对比结果 */
-  async function viewAndCompare() {
+  /** 查看远程文件并对比本地：一次拉取本地模型 + 远程文件，产出对比结果。
+   *  quiet=true 时用于同步完成后静默刷新，不重复写开始日志。 */
+  async function viewAndCompare({ quiet = false } = {}) {
     if (loading) return;
     if (!sshPassword) {
-      addLog("请先填写 SSH 密码", "warn", "compare");
+      if (!quiet) addLog("请先填写 SSH 密码", "warn", "compare");
       return;
     }
 
@@ -650,11 +710,11 @@
     remoteParsed = null;
     compareResult = null;
     localModels = [];
-    addLog("开始查看远程文件并与本地对比…", "info", "compare");
+    if (!quiet) addLog("开始查看远程文件并与本地对比…", "info", "compare");
     try {
       addLog("拉取本地与远程 config.toml…", "info", "compare");
       try {
-        const configData = await postJson("/api/config/compare", {
+        const configData = await backend.configCompare({
           host: remoteHost,
           user: remoteUser,
           password: sshPassword,
@@ -828,14 +888,66 @@
 </svelte:head>
 
 <div class="app-shell">
-  <header class="topbar">
-    <div class="topbar-inner">
+  {#if !serverOnline}
+    <div class="server-offline-banner" role="alert">
+      <span class="banner-icon">⚠</span>
       <div>
+        <strong>应用后端未响应</strong>
+        <p>请重新启动应用；后端恢复后本提示会自动消失。</p>
+      </div>
+    </div>
+  {/if}
+
+  <header class="topbar" data-tauri-drag-region="deep">
+    <div class="topbar-inner">
+      <div class="topbar-title">
         <h1>
           <span class="hourglass {autoOn ? "active" : ""}" aria-hidden="true">⌛</span>
           Codex 远程模型同步
         </h1>
         <p>本地 CC Switch → 远程 Ubuntu</p>
+      </div>
+      <div class="window-controls" aria-label="窗口控制">
+        <button
+          type="button"
+          class="window-control"
+          onclick={minimizeWindow}
+          aria-label="最小化"
+          title="最小化"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M5 10h10" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="window-control"
+          onclick={toggleMaximizeWindow}
+          aria-label={isMaximized ? "还原" : "最大化"}
+          title={isMaximized ? "还原" : "最大化"}
+        >
+          {#if isMaximized}
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M7 7V5.5h7.5V13H13" />
+              <rect x="5" y="7" width="8" height="8" rx="0.5" />
+            </svg>
+          {:else}
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <rect x="5" y="5" width="10" height="10" rx="0.5" />
+            </svg>
+          {/if}
+        </button>
+        <button
+          type="button"
+          class="window-control close"
+          onclick={closeWindow}
+          aria-label="关闭"
+          title="关闭"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="m6 6 8 8M14 6l-8 8" />
+          </svg>
+        </button>
       </div>
     </div>
   </header>
@@ -874,7 +986,7 @@
               oninput={saveConfig}
               autocomplete="new-password"
             />
-            <small>仅保存在本浏览器 localStorage，用于自动执行同步</small>
+            <small>仅保存在本机应用存储（localStorage），用于自动执行同步</small>
           </label>
         </div>
 
@@ -905,7 +1017,7 @@
               </button>
             </div>
             <small class="detect-result {detectState}">
-              {detectMessage || "路径可留空：服务端自动使用默认目录"}
+              {detectMessage || "路径可留空：后端自动使用默认目录"}
             </small>
           </label>
         </div>
@@ -1167,6 +1279,13 @@
         </div>
 
         <div class="status-list">
+          <div class="status-item">
+            <span class="status-label">Web 后端</span>
+            <span class="status-value {serverOnline ? "ok" : "fail"}">
+              <span class="dot"></span>
+              {serverOnline ? "在线" : "离线"}
+            </span>
+          </div>
           <div class="status-item">
             <span class="status-label">SSH</span>
             <span class="status-value {sshState}">
