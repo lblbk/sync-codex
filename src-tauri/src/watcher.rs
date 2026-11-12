@@ -176,7 +176,7 @@ impl AutoWatcher {
             return;
         }
         self.status.syncing = true;
-        let result = ssh::sync_remote(&conf.host, &conf.user, &conf.password, &conf.path, &raw);
+        let result = ssh::sync_remote(&conf.host, &conf.user, &conf.password, &conf.path, &raw).await;
         self.status.syncing = false;
         self.status.last_sync_at = Some(now_ms());
         self.status.last_sync_ok = Some(result.is_ok());

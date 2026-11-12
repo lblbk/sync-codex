@@ -18,5 +18,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
-ssh2 = "0.9"
+# SSH client: pure-Rust protocol stack.
+# `default-features = false` + `ring` keeps us on one audited C dependency
+# (`ring`) and drops `aws-lc-sys`, which would additionally require CMake on
+# Windows. `flate2` re-enables the compression support the default features had.
+russh = { version = "0.65", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh-sftp = { version = "2", default-features = false }
+# Force the pure-Rust deflate backend so no `libz-sys` (C) creeps in via russh.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 dirs = "6"

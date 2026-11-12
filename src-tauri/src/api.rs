@@ -75,12 +75,7 @@ pub async fn sync(body: Value) -> Result<Value, String> {
                 .unwrap_or_else(|| "[]".to_string())
         });
 
-    let res = tokio::task::spawn_blocking(move || {
-        ssh::sync_remote(&host, &user, &password, &path, &raw)
-    })
-    .await
-    .map_err(|e| e.to_string())
-    .and_then(|r| r);
+    let res = ssh::sync_remote(&host, &user, &password, &path, &raw).await;
 
     match res {
         Ok(stdout) => Ok(json!({ "success": true, "error": "", "stdout": stdout })),
@@ -95,12 +90,7 @@ pub async fn remote_view(body: Value) -> Result<Value, String> {
     let password = get_str(&body, "password");
     let path = get_str(&body, "path");
 
-    let res = tokio::task::spawn_blocking(move || {
-        ssh::view_remote_file(&host, &user, &password, &path)
-    })
-    .await
-    .map_err(|e| e.to_string())
-    .and_then(|r| r);
+    let res = ssh::view_remote_file(&host, &user, &password, &path).await;
 
     match res {
         Ok(content) => Ok(json!({ "success": true, "error": "", "content": content })),
@@ -115,12 +105,7 @@ pub async fn remote_models(body: Value) -> Result<Value, String> {
     let password = get_str(&body, "password");
     let path = get_str(&body, "path");
 
-    let res = tokio::task::spawn_blocking(move || {
-        ssh::view_remote_file(&host, &user, &password, &path)
-    })
-    .await
-    .map_err(|e| e.to_string())
-    .and_then(|r| r);
+    let res = ssh::view_remote_file(&host, &user, &password, &path).await;
 
     match res {
         Ok(content) => {
@@ -140,10 +125,7 @@ pub async fn ssh_test(body: Value) -> Result<Value, String> {
     let user = get_str(&body, "user");
     let password = get_str(&body, "password");
 
-    let res = tokio::task::spawn_blocking(move || ssh::test_remote(&host, &user, &password))
-        .await
-        .map_err(|e| e.to_string())
-        .and_then(|r| r);
+    let res = ssh::test_remote(&host, &user, &password).await;
 
     match res {
         Ok(()) => Ok(json!({ "success": true, "error": "" })),
@@ -181,17 +163,12 @@ pub async fn config_compare(body: Value) -> Result<Value, String> {
     } else {
         remote_config
     };
-    let remote_config_for_ssh = remote_config.clone();
+    let host = get_str(&body, "host");
+    let user = get_str(&body, "user");
+    let password = get_str(&body, "password");
 
     let local_content = std::fs::read_to_string(&config_path).ok();
-    let remote = tokio::task::spawn_blocking({
-        let host = get_str(&body, "host");
-        let user = get_str(&body, "user");
-        let password = get_str(&body, "password");
-        move || ssh::view_remote_file(&host, &user, &password, &remote_config_for_ssh)
-    })
-    .await
-    .map_err(|e| e.to_string())?;
+    let remote = ssh::view_remote_file(&host, &user, &password, &remote_config).await;
     let remote_exists = remote.is_ok();
     let remote_content = remote.clone().unwrap_or_default();
     let remote_error = remote.err().unwrap_or_default();

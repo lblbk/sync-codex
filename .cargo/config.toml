@@ -1,0 +1,7 @@
+# Workaround for MSVC `cl.exe` error D8050 ("未能将命令行放入调试记录中").
+# `cc` (used by `ring`, and previously by `libz-sys`) adds `-Z7 -Brepro` for MSVC
+# by default; on toolset 14.42.34433 that combination aborts the compiler.
+# Disabling cc's default flags skips `-Z7 -Brepro` so the C dependencies build.
+# See https://github.com/rust-lang/cc-rs/issues/1257 and the project README.
+[env]
+CRATE_CC_NO_DEFAULTS = "1"
