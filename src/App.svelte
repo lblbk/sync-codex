@@ -5,14 +5,15 @@
   import ModelList from "./ModelList.svelte";
   import LogTable from "./LogTable.svelte";
 
-  const STORAGE_KEY = "codex_sync_config";
+  const STORAGE_KEY = "codex_sync_profiles_v2";
+  const LEGACY_STORAGE_KEY = "codex_sync_config";
   const LOG_KEY = "codex_sync_logs";
   const SYNC_META_KEY = "codex_sync_meta";
+  const REMOTE_CATALOG_FILE = "cc-switch-model-catalog.json";
 
   const DEFAULTS = {
     remoteHost: "192.168.31.165",
     remoteUser: "humble",
-    remotePath: "/home/humble/.codex/cc-switch-model-catalog.json",
     sshPassword: "",
   };
 
@@ -26,12 +27,53 @@
     system: "系统",
   };
 
-  // ---------- 连接配置 ----------
-  let remoteHost = $state(DEFAULTS.remoteHost);
-  let remoteUser = $state(DEFAULTS.remoteUser);
-  let remotePath = $state(DEFAULTS.remotePath);
-  let sshPassword = $state(DEFAULTS.sshPassword);
+  function makeProfileId() {
+    return `computer-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  function createProfile(seed = {}) {
+    return {
+      id: seed.id || makeProfileId(),
+      name: seed.name || "",
+      host: seed.host || "",
+      user: seed.user || "",
+      password: seed.password || "",
+      home: seed.home || "",
+    };
+  }
+
+  function fallbackRemoteHome(user) {
+    const value = String(user || "").trim();
+    if (!value) return "";
+    return value === "root" ? "/root" : `/home/${value}`;
+  }
+
+  function remoteCatalogPath(profile) {
+    const home = String(profile?.home || fallbackRemoteHome(profile?.user)).replace(
+      /\/+$/,
+      "",
+    );
+    return home ? `${home}/.codex/${REMOTE_CATALOG_FILE}` : "";
+  }
+
+  // ---------- 电脑标签与配置 ----------
+  let profiles = $state([]);
+  let activeProfileId = $state("");
+  let activeProfile = $derived(
+    profiles.find((profile) => profile.id === activeProfileId) || null,
+  );
+  let activeTabId = $state("home"); // home | new | profile id
+  let newProfileDraft = $state(null);
+  let newProfileError = $state("");
+  let profileStates = $state({});
+  let remoteHost = $derived(activeProfile?.host || "");
+  let remoteUser = $derived(activeProfile?.user || "");
+  let remotePath = $derived(remoteCatalogPath(activeProfile));
+  let sshPassword = $derived(activeProfile?.password || "");
   let sshState = $state("unknown"); // unknown | ok | fail
+  let editingProfile = $state(false);
+  let profileDraft = $state(null);
+  let profileEditError = $state("");
   let ccState = $state("unknown");
   let testing = $state(false);
   let serverOnline = $state(true);
@@ -178,7 +220,6 @@
     backfillSyncMetaFromLogs();
     loadAutoStatus(); // 恢复后端监控状态
     if (!localFile) autoDetectFile(); // 未保存过路径时自动探测默认目录
-    testConnections(true); // 打开页面自动检测连接（静默模式，不写提醒日志）
     startHealthCheck();
     initWindowState();
   });
@@ -265,41 +306,298 @@
     }
   }
 
+  function normalizeProfile(raw, index) {
+    return createProfile({
+      id: raw?.id,
+      name: raw?.name || `电脑 ${index + 1}`,
+      host: raw?.host || raw?.remoteHost || "",
+      user: raw?.user || raw?.remoteUser || "",
+      password: raw?.password || raw?.sshPassword || "",
+      home: raw?.home || "",
+    });
+  }
+
   function loadConfig() {
     try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-      remoteHost = saved.remoteHost || DEFAULTS.remoteHost;
-      remoteUser = saved.remoteUser || DEFAULTS.remoteUser;
-      remotePath = saved.remotePath || DEFAULTS.remotePath;
-      sshPassword = saved.sshPassword || DEFAULTS.sshPassword;
-      localFile = saved.localFile || "";
-      intervalMs = saved.intervalMs || 2000;
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      const legacy = JSON.parse(
+        localStorage.getItem(LEGACY_STORAGE_KEY) || "null",
+      );
+      const savedProfiles = Array.isArray(saved?.profiles)
+        ? saved.profiles
+        : [];
+      const migratedProfiles = savedProfiles.length
+        ? savedProfiles
+        : legacy
+          ? [legacy]
+          : [];
+
+      profiles = migratedProfiles
+        .map(normalizeProfile)
+        .filter(
+          (profile) =>
+            profile.host.trim() && profile.user.trim() && profile.password,
+        );
+      activeProfileId = profiles.some(
+        (profile) =>
+          profile.id === saved?.activeProfileId &&
+          profile.host.trim() &&
+          profile.user.trim() &&
+          profile.password,
+      )
+        ? saved.activeProfileId
+        : profiles.find(
+            (profile) =>
+              profile.host.trim() && profile.user.trim() && profile.password,
+          )?.id || "";
+      activeTabId = "home";
+      localFile = saved?.localFile || legacy?.localFile || "";
+      intervalMs = saved?.intervalMs || legacy?.intervalMs || 2000;
+      saveConfig();
     } catch {
-      resetToDefaults();
+      profiles = [];
+      activeProfileId = "";
+      activeTabId = "home";
     }
   }
 
   function saveConfig() {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        remoteHost,
-        remoteUser,
-        remotePath,
-        sshPassword,
-        localFile,
-        intervalMs,
-      }),
-    );
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          version: 3,
+          profiles,
+          activeProfileId,
+          activeTabId,
+          localFile,
+          intervalMs,
+        }),
+      );
+    } catch {
+      // 本地存储不可用时不阻断当前操作
+    }
   }
 
-  function resetToDefaults() {
-    remoteHost = DEFAULTS.remoteHost;
-    remoteUser = DEFAULTS.remoteUser;
-    remotePath = DEFAULTS.remotePath;
-    sshPassword = DEFAULTS.sshPassword;
+  async function showHome() {
+    if (autoOn) await stopAutoSync();
+    if (editingProfile) cancelProfileEdit();
+    newProfileDraft = null;
+    newProfileError = "";
+    activeTabId = "home";
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          version: 3,
+          profiles,
+          activeProfileId,
+          activeTabId,
+          localFile,
+          intervalMs,
+        }),
+      );
+    } catch {
+      // 首页不依赖本地存储是否可写
+    }
+  }
+
+  function updateProfile(id, field, value, persist = true) {
+    profiles = profiles.map((profile) => {
+      if (profile.id !== id) return profile;
+      return {
+        ...profile,
+        [field]: value,
+        ...(field === "user" || field === "host" ? { home: "" } : {}),
+      };
+    });
+    if (persist && ["host", "user", "password"].includes(field)) {
+      sshState = "unknown";
+    }
+    if (persist) saveConfig();
+  }
+
+  function profileState(id) {
+    if (id === activeProfileId) return sshState;
+    return profileStates[id] || "unknown";
+  }
+
+  function profileInitial(profile) {
+    const name = String(profile?.name || "").trim();
+    return name ? name.slice(0, 1).toUpperCase() : "?";
+  }
+
+  function beginProfileEdit() {
+    profileDraft = { ...activeProfile };
+    profileEditError = "";
+    editingProfile = true;
+  }
+
+  function updateProfileDraft(field, value) {
+    if (!profileDraft) return;
+    profileDraft = {
+      ...profileDraft,
+      [field]: value,
+      ...(field === "user" || field === "host" ? { home: "" } : {}),
+    };
+    profileEditError = "";
+  }
+
+  function cancelProfileEdit() {
+    editingProfile = false;
+    profileDraft = null;
+    profileEditError = "";
+  }
+
+  async function confirmProfileEdit() {
+    if (!profileDraft || !activeProfile) return;
+    const host = profileDraft.host.trim();
+    const user = profileDraft.user.trim();
+    if (!host || !user || !profileDraft.password) {
+      profileEditError = "请完整填写远程主机、用户名和 SSH 密码。";
+      return;
+    }
+    const id = activeProfile.id;
+    const index = profiles.findIndex((profile) => profile.id === id);
+    profiles = profiles.map((profile) =>
+      profile.id === id
+        ? createProfile({
+            ...profileDraft,
+            id,
+            host,
+            user,
+            name: profileDraft.name.trim() || `电脑 ${index + 1}`,
+          })
+        : profile,
+    );
+    editingProfile = false;
+    profileDraft = null;
+    profileEditError = "";
+    sshState = "unknown";
     saveConfig();
-    addLog("已恢复默认配置", "info", "system");
+    addLog("电脑配置已更新，正在检测连接…", "info", "connection");
+    await testConnections(false);
+  }
+
+  function discardUnsavedRemoval(profile) {
+    const complete =
+      profile.host.trim() && profile.user.trim() && profile.password;
+    if (!complete) {
+      profiles = profiles.filter((item) => item.id !== profile.id);
+      profileStates = Object.fromEntries(
+        Object.entries(profileStates).filter(([id]) => id !== profile.id),
+      );
+      if (activeProfileId === profile.id) {
+        activeProfileId = "";
+        sshState = "unknown";
+        activeTabId = "home";
+      }
+      saveConfig();
+      return true;
+    }
+    return false;
+  }
+
+  async function openNewProfileTab() {
+    if (autoOn) await stopAutoSync();
+    if (editingProfile) cancelProfileEdit();
+    newProfileDraft = createProfile({ name: `电脑 ${profiles.length + 1}` });
+    newProfileError = "";
+    activeTabId = "new";
+    saveConfig();
+  }
+
+  function updateNewProfileDraft(field, value) {
+    if (!newProfileDraft) return;
+    newProfileDraft = {
+      ...newProfileDraft,
+      [field]: value,
+      ...(field === "user" || field === "host" ? { home: "" } : {}),
+    };
+    newProfileError = "";
+  }
+
+  function closeNewProfileTab() {
+    newProfileDraft = null;
+    newProfileError = "";
+    activeTabId = "home";
+    saveConfig();
+  }
+
+  async function createNewProfile() {
+    if (!newProfileDraft) return;
+    const host = newProfileDraft.host.trim();
+    const user = newProfileDraft.user.trim();
+    if (!host || !user || !newProfileDraft.password) {
+      newProfileError = "请完整填写远程主机、用户名和 SSH 密码。";
+      return;
+    }
+    const profile = createProfile({
+      ...newProfileDraft,
+      host,
+      user,
+      name: newProfileDraft.name.trim() || `电脑 ${profiles.length + 1}`,
+    });
+    profiles = [...profiles, profile];
+    activeProfileId = profile.id;
+    activeTabId = profile.id;
+    newProfileDraft = null;
+    newProfileError = "";
+    sshState = "unknown";
+    saveConfig();
+    addLog(`已创建电脑配置 ${profile.name}`, "info", "system");
+    await testConnections(false);
+  }
+
+  function openHome() {
+    if (editingProfile) cancelProfileEdit();
+    activeTabId = "home";
+    saveConfig();
+  }
+
+  async function activateProfile(id) {
+    const profile = profiles.find((item) => item.id === id);
+    if (!profile) return;
+    if (autoOn) await stopAutoSync();
+    editingProfile = false;
+    profileDraft = null;
+    activeTabId = id;
+    if (activeProfileId !== id) {
+      activeProfileId = id;
+      sshState = "unknown";
+      saveConfig();
+      addLog(
+        `已切换到 ${profile.name || profile.host || "电脑配置"}`,
+        "info",
+        "connection",
+      );
+    }
+    await testConnections(false);
+  }
+
+  async function removeProfile(id) {
+    const index = profiles.findIndex((profile) => profile.id === id);
+    if (index < 0) return;
+    const profile = profiles[index];
+    if (discardUnsavedRemoval(profile)) return;
+    if (!window.confirm(`删除「${profile.name || profile.host || "电脑配置"}」？`)) {
+      return;
+    }
+    const deletingActive = id === activeProfileId;
+    if (autoOn && deletingActive) await stopAutoSync();
+    const remaining = profiles.filter((item) => item.id !== id);
+    profiles = remaining;
+    delete profileStates[id];
+    if (deletingActive || activeTabId === id) {
+      const next = remaining[Math.min(index, remaining.length - 1)] || null;
+      activeProfileId = next?.id || "";
+      sshState = "unknown";
+      editingProfile = false;
+      profileDraft = null;
+      activeTabId = next?.id || "home";
+    }
+    saveConfig();
+    addLog("已删除电脑配置", "info", "system");
   }
 
   function pad2(n) {
@@ -443,6 +741,10 @@
  *  silent=true 时（页面自动检测）跳过"未填密码"的提醒，避免打扰 */
   async function testConnections(silent = false) {
     if (testing) return;
+    const testedProfileId = activeProfileId;
+    const testedHost = remoteHost;
+    const testedUser = remoteUser;
+    const testedPassword = sshPassword;
     testing = true;
     sshState = "unknown";
     ccState = "unknown";
@@ -456,31 +758,30 @@
       ccState = "fail";
       addLog(`CC Switch 离线: ${error.message}`, "error", "connection");
     }
-    if (!sshPassword) {
+    if (!testedPassword) {
       sshState = "fail";
       if (!silent) addLog("SSH 未测试：请先填写 SSH 密码", "warn", "connection");
     } else {
       try {
         const data = await backend.sshTest({
-          host: remoteHost,
-          user: remoteUser,
-          password: sshPassword,
+          host: testedHost,
+          user: testedUser,
+          password: testedPassword,
         });
+        if (data.home && activeProfileId === testedProfileId) {
+          updateProfile(testedProfileId, "home", String(data.home).trim());
+        }
         sshState = "ok";
-        addLog(`SSH 连接成功（${remoteHost}）`, "success", "connection");
+        profileStates[testedProfileId] = "ok";
+        addLog(`SSH 连接成功（${testedHost}）`, "success", "connection");
       } catch (error) {
         sshState = "fail";
+        profileStates[testedProfileId] = "fail";
         addLog(`SSH 连接失败: ${error.message}`, "error", "connection");
       }
     }
+    if (sshState === "fail") profileStates[testedProfileId] = "fail";
     testing = false;
-  }
-
-  /** 应用配置：保存并立即重新检测连接 */
-  function applyConfig() {
-    saveConfig();
-    addLog("配置已保存，正在检测连接…", "info", "connection");
-    testConnections(false);
   }
 
   /* ---------- 手动同步 ---------- */
@@ -952,81 +1253,314 @@
     </div>
   </header>
 
-  <div class="workspace">
-    <main class="content">
-      <!-- ① 配置：左主列 -->
-      <section class="panel">
-        <div class="panel-head">
-          <h2>连接配置</h2>
-          <button class="btn ghost" onclick={resetToDefaults}>恢复默认</button>
+  <div class="browser-tabs" role="tablist" aria-label="电脑工作区">
+    <button
+      type="button"
+      class="browser-tab home-tab"
+      class:active={activeTabId === "home"}
+      onclick={showHome}
+      title="首页"
+      aria-label="首页"
+    >
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M3.5 9.2 10 3.6l6.5 5.6v7.2H12v-4H8v4H3.5Z" />
+      </svg>
+    </button>
+
+    {#each profiles as profile, index (profile.id)}
+      {@const isActive = activeTabId === profile.id}
+      <div class="browser-tab" class:active={isActive} role="tab">
+        <button
+          type="button"
+          class="browser-tab-select"
+          onclick={() => activateProfile(profile.id)}
+          title={`${profile.name || `电脑 ${index + 1}`} · ${profile.host}`}
+        >
+          <span class="tab-favicon">{profileInitial(profile)}</span>
+          <span class="browser-tab-label">{profile.name || `电脑 ${index + 1}`}</span>
+          <span
+            class="tab-status {profileState(profile.id)}"
+            title={SSH_TEXT[profileState(profile.id)]}
+          ></span>
+        </button>
+        <button
+          type="button"
+          class="browser-tab-remove"
+          onclick={() => removeProfile(profile.id)}
+          aria-label={`关闭 ${profile.name || `电脑 ${index + 1}`}`}
+          title="关闭并删除配置"
+        >×</button>
+      </div>
+    {/each}
+
+    {#if activeTabId === "new"}
+      <div class="browser-tab active new-tab" role="tab">
+        <span class="browser-tab-select static">
+          <span class="tab-favicon">+</span>
+          <span class="browser-tab-label">新电脑</span>
+        </span>
+        <button
+          type="button"
+          class="browser-tab-remove"
+          onclick={closeNewProfileTab}
+          aria-label="关闭新电脑标签"
+          title="关闭"
+        >×</button>
+      </div>
+    {/if}
+
+    <button
+      type="button"
+      class="new-tab-button"
+      onclick={openNewProfileTab}
+      aria-label="新建电脑"
+      title="新建电脑"
+    >+</button>
+    <div class="tab-drag-fill" data-tauri-drag-region="deep"></div>
+  </div>
+
+  {#if activeTabId === "home"}
+    <main class="home-page">
+      <section class="home-intro">
+        <h2>远程电脑</h2>
+        <button class="btn primary" onclick={openNewProfileTab}>新建电脑</button>
+      </section>
+
+      {#if profiles.length === 0}
+        <section class="home-empty">
+          <div class="home-symbol" aria-hidden="true">
+            <svg viewBox="0 0 64 64">
+              <rect x="12" y="16" width="40" height="29" rx="3" />
+              <path d="M24 51h16M32 45v6" />
+            </svg>
+          </div>
+          <h3>还没有电脑配置</h3>
+          <p>新建一台电脑并填写连接信息，之后可从这里切换。</p>
+          <button class="btn primary" onclick={openNewProfileTab}>新建电脑</button>
+        </section>
+      {:else}
+        <section class="home-grid" aria-label="电脑列表">
+          {#each profiles as profile, index (profile.id)}
+            <button
+              type="button"
+              class="home-card"
+              onclick={() => activateProfile(profile.id)}
+            >
+              <span class="home-card-favicon">{profileInitial(profile)}</span>
+              <span class="home-card-body">
+                <strong>{profile.name || `电脑 ${index + 1}`}</strong>
+                <small>{profile.user}@{profile.host}</small>
+              </span>
+              <span class="tab-status {profileState(profile.id)}"></span>
+            </button>
+          {/each}
+        </section>
+      {/if}
+    </main>
+  {:else if activeTabId === "new"}
+    <main class="new-profile-page">
+      <section class="new-profile-card">
+        <div class="new-profile-heading">
+          <span class="new-profile-icon">+</span>
+          <div>
+            <h2>新建电脑</h2>
+            <p>填写 SSH 连接信息后即可开始同步。</p>
+          </div>
         </div>
 
-        <div class="grid">
+        <div class="new-profile-form">
           <label>
-            <span>本地 CC Switch API</span>
-            <input value="http://127.0.0.1:15721/v1/models" disabled />
+            <span>电脑名称</span>
+            <input
+              value={newProfileDraft?.name || ""}
+              oninput={(event) => updateNewProfileDraft("name", event.currentTarget.value)}
+              placeholder="例如：办公室电脑"
+              autocomplete="off"
+            />
           </label>
           <label>
             <span>远程主机</span>
-            <input bind:value={remoteHost} oninput={saveConfig} placeholder="192.168.31.165" />
+            <input
+              value={newProfileDraft?.host || ""}
+              oninput={(event) => updateNewProfileDraft("host", event.currentTarget.value)}
+              placeholder="192.168.31.98"
+              inputmode="url"
+              autocomplete="off"
+            />
           </label>
           <label>
-            <span>远程用户名</span>
-            <input bind:value={remoteUser} oninput={saveConfig} placeholder="humble" />
+            <span>用户名</span>
+            <input
+              value={newProfileDraft?.user || ""}
+              oninput={(event) => updateNewProfileDraft("user", event.currentTarget.value)}
+              placeholder="humble"
+              autocomplete="username"
+            />
           </label>
-          <label class="wide">
-            <span>远程文件路径</span>
-            <input bind:value={remotePath} oninput={saveConfig} />
-          </label>
-          <label class="wide">
+          <label>
             <span>SSH 密码</span>
             <input
               type="password"
-              bind:value={sshPassword}
-              oninput={saveConfig}
-              autocomplete="new-password"
+              value={newProfileDraft?.password || ""}
+              oninput={(event) => updateNewProfileDraft("password", event.currentTarget.value)}
+              placeholder="输入密码"
+              autocomplete="current-password"
             />
-            <small>仅保存在本机应用存储（localStorage），用于自动执行同步</small>
           </label>
         </div>
 
-        <div class="actions">
-          <button class="btn primary" onclick={applyConfig} disabled={testing}>
-            {testing ? "检测中…" : "确定"}
-          </button>
-          <p class="hint inline">修改配置后点击「确定」，连接状态自动更新。</p>
+        <div class="new-profile-path">
+          <span>远程文件</span>
+          <code>{remoteCatalogPath(newProfileDraft) || "填写用户名后自动生成"}</code>
+        </div>
+
+        {#if newProfileError}
+          <p class="form-error" role="alert">{newProfileError}</p>
+        {/if}
+
+        <div class="new-profile-actions">
+          <button class="btn ghost" onclick={closeNewProfileTab}>取消</button>
+          <button class="btn primary" onclick={createNewProfile}>创建并连接</button>
         </div>
       </section>
+    </main>
+  {:else if activeProfile}
+    <div class="workspace">
+      <main class="content">
+        <section class="panel profile-config-card">
+          <div class="panel-head">
+            <div>
+              <h2>配置</h2>
+              <p class="panel-subtitle">
+                {activeProfile.name} · {activeProfile.user}@{activeProfile.host}
+              </p>
+            </div>
+            <span class="connection-pill {sshState}">
+              <span class="dot"></span>
+              {SSH_TEXT[sshState]}
+            </span>
+          </div>
 
-      <section class="panel">
-        <div class="panel-head">
-          <h2>同步配置</h2>
-        </div>
-
-        <div class="grid">
-          <label class="wide">
-            <span>本地模型目录文件</span>
-            <div class="input-with-btn">
-              <input
-                bind:value={localFile}
-                oninput={saveConfig}
-                placeholder="可留空，使用默认目录"
-              />
-              <button class="btn" onclick={autoDetectFile} disabled={detecting}>
-                {detecting ? "探测中" : "探测"}
+          {#if !editingProfile}
+            <div class="profile-readonly-grid">
+              <div class="profile-readonly-item">
+                <span>电脑名称</span>
+                <strong>{activeProfile.name || "未命名电脑"}</strong>
+              </div>
+              <div class="profile-readonly-item">
+                <span>远程主机</span>
+                <strong>{activeProfile.host || "未配置"}</strong>
+              </div>
+              <div class="profile-readonly-item">
+                <span>用户名</span>
+                <strong>{activeProfile.user || "未配置"}</strong>
+              </div>
+              <div class="profile-readonly-item">
+                <span>SSH 密码</span>
+                <strong class:empty={!activeProfile.password}>
+                  {activeProfile.password ? "••••••" : "未设置"}
+                </strong>
+              </div>
+              <div class="profile-readonly-item wide">
+                <span>远程文件</span>
+                <code>{remoteCatalogPath(activeProfile) || "填写用户名后自动生成"}</code>
+              </div>
+            </div>
+            <div class="profile-actions">
+              <button class="btn" onclick={beginProfileEdit}>修改</button>
+              <button class="btn primary" onclick={() => testConnections(false)} disabled={testing}>
+                {testing ? "测试中…" : "测试"}
               </button>
             </div>
-            <small class="detect-result {detectState}">
-              {detectMessage || "路径可留空：后端自动使用默认目录"}
-            </small>
-          </label>
-        </div>
-      </section>
+          {:else}
+            <div class="profile-fields">
+              <label>
+                <span>电脑名称</span>
+                <input
+                  value={profileDraft?.name || ""}
+                  oninput={(event) => updateProfileDraft("name", event.currentTarget.value)}
+                  placeholder="例如：办公室电脑"
+                  autocomplete="off"
+                />
+              </label>
+              <label>
+                <span>远程主机</span>
+                <input
+                  value={profileDraft?.host || ""}
+                  oninput={(event) => updateProfileDraft("host", event.currentTarget.value)}
+                  placeholder="192.168.31.98"
+                  inputmode="url"
+                  autocomplete="off"
+                />
+              </label>
+              <label>
+                <span>用户名</span>
+                <input
+                  value={profileDraft?.user || ""}
+                  oninput={(event) => updateProfileDraft("user", event.currentTarget.value)}
+                  placeholder="humble"
+                  autocomplete="username"
+                />
+              </label>
+              <label>
+                <span>SSH 密码</span>
+                <input
+                  type="password"
+                  value={profileDraft?.password || ""}
+                  oninput={(event) => updateProfileDraft("password", event.currentTarget.value)}
+                  placeholder="输入密码"
+                  autocomplete="current-password"
+                />
+              </label>
+            </div>
 
-      <!-- ② 文件对比：左主列 -->
-    <section class="panel compare-panel {panelState}">
+            <div class="auto-path-field">
+              <div class="auto-path-label">
+                <span>远程文件</span>
+                <span class="auto-tag">{profileDraft?.home ? "已定位" : "自动生成"}</span>
+              </div>
+              <code title={remoteCatalogPath(profileDraft)}>
+                {remoteCatalogPath(profileDraft) || "填写用户名后自动生成"}
+              </code>
+            </div>
+
+            {#if profileEditError}
+              <p class="form-error" role="alert">{profileEditError}</p>
+            {/if}
+
+            <div class="profile-actions">
+              <button class="btn ghost" onclick={cancelProfileEdit}>取消</button>
+              <button class="btn primary" onclick={confirmProfileEdit}>确定</button>
+            </div>
+          {/if}
+
+          <div class="config-sync-section">
+            <div class="config-sync-head">
+              <h3>同步路径</h3>
+              <span>本地 CC Switch 模型目录</span>
+            </div>
+            <div class="config-path-field">
+              <span>本地模型目录文件</span>
+              <div class="input-with-btn">
+                <input
+                  bind:value={localFile}
+                  oninput={saveConfig}
+                  placeholder="可留空，使用默认目录"
+                />
+                <button class="btn" onclick={autoDetectFile} disabled={detecting}>
+                  {detecting ? "探测中" : "探测"}
+                </button>
+              </div>
+              <small class="detect-result {detectState}">
+                {detectMessage || "路径可留空：后端自动使用默认目录"}
+              </small>
+            </div>
+          </div>
+        </section>
+
+      <section class="panel compare-panel {panelState}">
     <div class="panel-head">
-      <h2>调试 · 对比</h2>
+      <h2>调试</h2>
       <button class="btn" onclick={viewAndCompare} disabled={loading}>
         {loading ? "读取中…" : "查看并对比"}
       </button>
@@ -1165,8 +1699,7 @@
     {/if}
       </section>
 
-  <!-- ③ 日志：持久化 + 统计 -->
-    <section class="panel">
+    <section class="panel log-card">
     <div class="panel-head">
       <h2>日志</h2>
       <div class="seg">
@@ -1262,13 +1795,13 @@
       </div>
     </div>
 
-    <LogTable
-      {logs}
-      typeText={TYPE_TEXT}
-      dateFilter={selectedStatDate}
-      onClear={clearLogs}
-      onClearDate={() => (selectedStatDate = "")}
-    />
+        <LogTable
+          {logs}
+          typeText={TYPE_TEXT}
+          dateFilter={selectedStatDate}
+          onClear={clearLogs}
+          onClearDate={() => (selectedStatDate = "")}
+        />
       </section>
     </main>
 
@@ -1396,5 +1929,6 @@
         </div>
       </section>
     </aside>
-  </div>
+    </div>
+  {/if}
 </div>

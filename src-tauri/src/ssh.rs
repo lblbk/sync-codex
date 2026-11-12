@@ -70,9 +70,13 @@ async fn open_sftp(
     Ok((handle, sftp))
 }
 
-pub async fn test_remote(host: &str, user: &str, password: &str) -> Result<(), String> {
-    let (_handle, _sftp) = open_sftp(host, user, password).await?;
-    Ok(())
+/// Connect and return the remote user's home directory (SFTP REALPATH of `.`),
+/// which the UI uses to derive `~/.codex/...` paths automatically.
+pub async fn test_remote(host: &str, user: &str, password: &str) -> Result<String, String> {
+    let (_handle, sftp) = open_sftp(host, user, password).await?;
+    sftp.canonicalize(".")
+        .await
+        .map_err(|e| format!("获取远程用户目录失败: {e}"))
 }
 
 pub async fn sync_remote(

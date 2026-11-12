@@ -128,7 +128,7 @@ pub async fn ssh_test(body: Value) -> Result<Value, String> {
     let res = ssh::test_remote(&host, &user, &password).await;
 
     match res {
-        Ok(()) => Ok(json!({ "success": true, "error": "" })),
+        Ok(home) => Ok(json!({ "success": true, "error": "", "home": home })),
         Err(error) => Err(error),
     }
 }
