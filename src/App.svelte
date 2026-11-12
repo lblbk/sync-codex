@@ -18,7 +18,6 @@
   };
 
   const SSH_TEXT = { unknown: "未测试", ok: "已连接", fail: "失败" };
-  const CC_TEXT = { unknown: "未测试", ok: "在线", fail: "离线" };
   const TYPE_TEXT = {
     sync: "手动同步",
     auto: "自动同步",
@@ -32,11 +31,12 @@
   }
 
   function createProfile(seed = {}) {
+    const user = seed.user || "";
     return {
       id: seed.id || makeProfileId(),
-      name: seed.name || "",
+      name: user,
       host: seed.host || "",
-      user: seed.user || "",
+      user,
       password: seed.password || "",
       home: seed.home || "",
     };
@@ -306,12 +306,12 @@
     }
   }
 
-  function normalizeProfile(raw, index) {
+  function normalizeProfile(raw) {
+    const user = raw?.user || raw?.remoteUser || "";
     return createProfile({
       id: raw?.id,
-      name: raw?.name || `电脑 ${index + 1}`,
       host: raw?.host || raw?.remoteHost || "",
-      user: raw?.user || raw?.remoteUser || "",
+      user,
       password: raw?.password || raw?.sshPassword || "",
       home: raw?.home || "",
     });
@@ -423,7 +423,7 @@
   }
 
   function profileInitial(profile) {
-    const name = String(profile?.name || "").trim();
+    const name = String(profile?.user || "").trim();
     return name ? name.slice(0, 1).toUpperCase() : "?";
   }
 
@@ -438,6 +438,7 @@
     profileDraft = {
       ...profileDraft,
       [field]: value,
+      ...(field === "user" ? { name: value.trim() } : {}),
       ...(field === "user" || field === "host" ? { home: "" } : {}),
     };
     profileEditError = "";
@@ -458,7 +459,6 @@
       return;
     }
     const id = activeProfile.id;
-    const index = profiles.findIndex((profile) => profile.id === id);
     profiles = profiles.map((profile) =>
       profile.id === id
         ? createProfile({
@@ -466,7 +466,6 @@
             id,
             host,
             user,
-            name: profileDraft.name.trim() || `电脑 ${index + 1}`,
           })
         : profile,
     );
@@ -501,7 +500,7 @@
   async function openNewProfileTab() {
     if (autoOn) await stopAutoSync();
     if (editingProfile) cancelProfileEdit();
-    newProfileDraft = createProfile({ name: `电脑 ${profiles.length + 1}` });
+    newProfileDraft = createProfile();
     newProfileError = "";
     activeTabId = "new";
     saveConfig();
@@ -512,6 +511,7 @@
     newProfileDraft = {
       ...newProfileDraft,
       [field]: value,
+      ...(field === "user" ? { name: value.trim() } : {}),
       ...(field === "user" || field === "host" ? { home: "" } : {}),
     };
     newProfileError = "";
@@ -536,7 +536,6 @@
       ...newProfileDraft,
       host,
       user,
-      name: newProfileDraft.name.trim() || `电脑 ${profiles.length + 1}`,
     });
     profiles = [...profiles, profile];
     activeProfileId = profile.id;
@@ -545,7 +544,7 @@
     newProfileError = "";
     sshState = "unknown";
     saveConfig();
-    addLog(`已创建电脑配置 ${profile.name}`, "info", "system");
+    addLog(`已创建电脑配置 ${profile.user}`, "info", "system");
     await testConnections(false);
   }
 
@@ -567,7 +566,7 @@
       sshState = "unknown";
       saveConfig();
       addLog(
-        `已切换到 ${profile.name || profile.host || "电脑配置"}`,
+        `已切换到 ${profile.user || profile.host || "电脑配置"}`,
         "info",
         "connection",
       );
@@ -580,7 +579,7 @@
     if (index < 0) return;
     const profile = profiles[index];
     if (discardUnsavedRemoval(profile)) return;
-    if (!window.confirm(`删除「${profile.name || profile.host || "电脑配置"}」？`)) {
+    if (!window.confirm(`删除「${profile.user || profile.host || "电脑配置"}」？`)) {
       return;
     }
     const deletingActive = id === activeProfileId;
@@ -1274,10 +1273,10 @@
           type="button"
           class="browser-tab-select"
           onclick={() => activateProfile(profile.id)}
-          title={`${profile.name || `电脑 ${index + 1}`} · ${profile.host}`}
+          title={`${profile.user || `电脑 ${index + 1}`} · ${profile.host}`}
         >
           <span class="tab-favicon">{profileInitial(profile)}</span>
-          <span class="browser-tab-label">{profile.name || `电脑 ${index + 1}`}</span>
+          <span class="browser-tab-label">{profile.user || `电脑 ${index + 1}`}</span>
           <span
             class="tab-status {profileState(profile.id)}"
             title={SSH_TEXT[profileState(profile.id)]}
@@ -1287,7 +1286,7 @@
           type="button"
           class="browser-tab-remove"
           onclick={() => removeProfile(profile.id)}
-          aria-label={`关闭 ${profile.name || `电脑 ${index + 1}`}`}
+          aria-label={`关闭 ${profile.user || `电脑 ${index + 1}`}`}
           title="关闭并删除配置"
         >×</button>
       </div>
@@ -1348,7 +1347,7 @@
             >
               <span class="home-card-favicon">{profileInitial(profile)}</span>
               <span class="home-card-body">
-                <strong>{profile.name || `电脑 ${index + 1}`}</strong>
+                <strong>{profile.user || `电脑 ${index + 1}`}</strong>
                 <small>{profile.user}@{profile.host}</small>
               </span>
               <span class="tab-status {profileState(profile.id)}"></span>
@@ -1369,15 +1368,6 @@
         </div>
 
         <div class="new-profile-form">
-          <label>
-            <span>电脑名称</span>
-            <input
-              value={newProfileDraft?.name || ""}
-              oninput={(event) => updateNewProfileDraft("name", event.currentTarget.value)}
-              placeholder="例如：办公室电脑"
-              autocomplete="off"
-            />
-          </label>
           <label>
             <span>远程主机</span>
             <input
@@ -1427,62 +1417,34 @@
   {:else if activeProfile}
     <div class="workspace">
       <main class="content">
-        <section class="panel profile-config-card">
-          <div class="panel-head">
-            <div>
-              <h2>配置</h2>
-              <p class="panel-subtitle">
-                {activeProfile.name} · {activeProfile.user}@{activeProfile.host}
-              </p>
-            </div>
+        <section class="panel compact-panel profile-config-card">
+        <div class="compact-summary">
+          <div class="compact-summary-main">
+            <h2>配置</h2>
             <span class="connection-pill {sshState}">
               <span class="dot"></span>
               {SSH_TEXT[sshState]}
             </span>
           </div>
+          <button class="btn" onclick={beginProfileEdit}>修改</button>
+        </div>
+        <div class="profile-info-grid">
+          <div class="profile-info-item">
+            <span>用户名</span>
+            <strong>{activeProfile.user || "未配置"}</strong>
+          </div>
+          <div class="profile-info-item">
+            <span>远程主机</span>
+            <strong>{activeProfile.host || "未配置"}</strong>
+          </div>
+          <div class="profile-info-item wide">
+            <span>远程文件</span>
+            <code title={remoteCatalogPath(activeProfile)}>{remoteCatalogPath(activeProfile) || "填写用户名后自动生成"}</code>
+          </div>
+        </div>
 
-          {#if !editingProfile}
-            <div class="profile-readonly-grid">
-              <div class="profile-readonly-item">
-                <span>电脑名称</span>
-                <strong>{activeProfile.name || "未命名电脑"}</strong>
-              </div>
-              <div class="profile-readonly-item">
-                <span>远程主机</span>
-                <strong>{activeProfile.host || "未配置"}</strong>
-              </div>
-              <div class="profile-readonly-item">
-                <span>用户名</span>
-                <strong>{activeProfile.user || "未配置"}</strong>
-              </div>
-              <div class="profile-readonly-item">
-                <span>SSH 密码</span>
-                <strong class:empty={!activeProfile.password}>
-                  {activeProfile.password ? "••••••" : "未设置"}
-                </strong>
-              </div>
-              <div class="profile-readonly-item wide">
-                <span>远程文件</span>
-                <code>{remoteCatalogPath(activeProfile) || "填写用户名后自动生成"}</code>
-              </div>
-            </div>
-            <div class="profile-actions">
-              <button class="btn" onclick={beginProfileEdit}>修改</button>
-              <button class="btn primary" onclick={() => testConnections(false)} disabled={testing}>
-                {testing ? "测试中…" : "测试"}
-              </button>
-            </div>
-          {:else}
+        {#if editingProfile}
             <div class="profile-fields">
-              <label>
-                <span>电脑名称</span>
-                <input
-                  value={profileDraft?.name || ""}
-                  oninput={(event) => updateProfileDraft("name", event.currentTarget.value)}
-                  placeholder="例如：办公室电脑"
-                  autocomplete="off"
-                />
-              </label>
               <label>
                 <span>远程主机</span>
                 <input
@@ -1806,38 +1768,20 @@
     </main>
 
     <aside class="side-rail">
-      <section class="panel rail">
-        <div class="panel-head">
-          <h2>连接状态</h2>
+      <section class="panel rail status-rail" aria-label="连接状态">
+        <div class="status-mini">
+          <span class="status-mini-item" title="远程 SSH 连接">
+            <span class="dot {sshState}"></span>
+            SSH
+          </span>
+          <span class="status-mini-item" title="本地 CC Switch 服务">
+            <span class="dot {ccState}"></span>
+            ccs
+          </span>
+          <button class="btn" onclick={testConnections} disabled={testing}>
+            {testing ? "测试中…" : "测试"}
+          </button>
         </div>
-
-        <div class="status-list">
-          <div class="status-item">
-            <span class="status-label">Web 后端</span>
-            <span class="status-value {serverOnline ? "ok" : "fail"}">
-              <span class="dot"></span>
-              {serverOnline ? "在线" : "离线"}
-            </span>
-          </div>
-          <div class="status-item">
-            <span class="status-label">SSH</span>
-            <span class="status-value {sshState}">
-              <span class="dot"></span>
-              {SSH_TEXT[sshState]}
-            </span>
-          </div>
-          <div class="status-item">
-            <span class="status-label">CC Switch</span>
-            <span class="status-value {ccState}">
-              <span class="dot"></span>
-              {CC_TEXT[ccState]}
-            </span>
-          </div>
-        </div>
-
-        <button class="btn primary full-btn" onclick={testConnections} disabled={testing}>
-          {testing ? "测试中…" : "测试连接"}
-        </button>
       </section>
 
       <section class="panel rail">
